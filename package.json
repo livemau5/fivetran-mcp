@@ -1,0 +1,41 @@
+{
+  "name": "fivetran-mcp",
+  "version": "1.0.0",
+  "description": "25 tools. Full API coverage. Zero bloat. A hybrid Fivetran MCP server with native tools for daily data engineering and search+execute for the entire REST API.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "fivetran-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc && chmod 755 dist/index.js",
+    "dev": "tsx src/index.ts",
+    "generate-catalog": "tsx scripts/generate-catalog.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0"
+  },
+  "keywords": [
+    "mcp",
+    "fivetran",
+    "model-context-protocol",
+    "ai",
+    "llm",
+    "etl",
+    "data-engineering",
+    "data-pipeline"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}
