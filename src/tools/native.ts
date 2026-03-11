@@ -6,14 +6,18 @@ import {
   unwrapData,
   formatResponse,
   formatError,
+  summarizeWriteResponse,
 } from "../utils.js";
+
+const VERBOSE_DESC = "Return full API response instead of compact summary (default false)";
 
 async function ft(
   auth: string,
   method: string,
   path: string,
   params?: Record<string, string>,
-  body?: unknown
+  body?: unknown,
+  compact?: string
 ): Promise<{ text: string; isError?: boolean }> {
   const url = buildUrl(path, params);
   const opts: RequestInit = {
@@ -29,6 +33,9 @@ async function ft(
     const data = ct.includes("json") ? await res.json() : await res.text();
     if (!res.ok) return { text: formatError(res.status, data), isError: true };
     const unwrapped = unwrapData(data);
+    if (compact) {
+      return { text: summarizeWriteResponse(unwrapped, compact) };
+    }
     return { text: formatResponse(unwrapped) };
   } catch (err) {
     return {
@@ -59,7 +66,6 @@ export function registerNativeTools(
     async ({ group_id, limit = 100, cursor }) => {
       const params: Record<string, string> = { limit: String(limit) };
       if (cursor) params.cursor = cursor;
-      // Use group-specific endpoint if group_id provided
       const path = group_id ? `/groups/${group_id}/connections` : "/connections";
       const r = await ft(auth, "GET", path, params);
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
@@ -82,7 +88,7 @@ export function registerNativeTools(
   // 3. Create Connection
   server.tool(
     "create_connection",
-    "Create a new Fivetran connection (connector). Use get_connector_metadata to discover available connector types and their required config.",
+    "Create a new Fivetran connection (connector). Use get_connector_metadata to discover available connector types and their required config. Returns compact confirmation by default — set verbose=true for full response.",
     {
       group_id: z.string().describe("Group (destination) to create the connection in"),
       service: z.string().describe("Connector type (e.g., 'google_sheets', 'postgres', 'salesforce')"),
@@ -90,13 +96,14 @@ export function registerNativeTools(
       paused: z.boolean().optional().describe("Create in paused state (default false)"),
       trust_certificates: z.boolean().optional().describe("Auto-trust certificates"),
       trust_fingerprints: z.boolean().optional().describe("Auto-trust fingerprints"),
+      verbose: z.boolean().optional().describe(VERBOSE_DESC),
     },
-    async ({ group_id, service, config, paused, trust_certificates, trust_fingerprints }) => {
+    async ({ group_id, service, config, paused, trust_certificates, trust_fingerprints, verbose }) => {
       const body: Record<string, unknown> = { group_id, service, config };
       if (paused !== undefined) body.paused = paused;
       if (trust_certificates !== undefined) body.trust_certificates = trust_certificates;
       if (trust_fingerprints !== undefined) body.trust_fingerprints = trust_fingerprints;
-      const r = await ft(auth, "POST", "/connections", undefined, body);
+      const r = await ft(auth, "POST", "/connections", undefined, body, verbose ? undefined : "Connection created successfully.");
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
     }
   );
@@ -104,21 +111,22 @@ export function registerNativeTools(
   // 4. Update Connection
   server.tool(
     "update_connection",
-    "Update a connection's configuration, schedule, or settings.",
+    "Update a connection's configuration, schedule, or settings. Returns compact confirmation by default — set verbose=true for full response.",
     {
       connection_id: z.string().describe("The connection ID"),
       config: z.record(z.unknown()).optional().describe("Updated connector-specific config"),
       paused: z.boolean().optional().describe("Set paused state"),
       sync_frequency: z.number().optional().describe("Sync frequency in minutes (e.g., 60, 360, 1440)"),
       schedule_type: z.enum(["auto", "manual"]).optional().describe("Schedule type"),
+      verbose: z.boolean().optional().describe(VERBOSE_DESC),
     },
-    async ({ connection_id, config, paused, sync_frequency, schedule_type }) => {
+    async ({ connection_id, config, paused, sync_frequency, schedule_type, verbose }) => {
       const body: Record<string, unknown> = {};
       if (config) body.config = config;
       if (paused !== undefined) body.paused = paused;
       if (sync_frequency !== undefined) body.sync_frequency = sync_frequency;
       if (schedule_type) body.schedule_type = schedule_type;
-      const r = await ft(auth, "PATCH", `/connections/${connection_id}`, undefined, body);
+      const r = await ft(auth, "PATCH", `/connections/${connection_id}`, undefined, body, verbose ? undefined : "Connection updated successfully.");
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
     }
   );
@@ -129,9 +137,10 @@ export function registerNativeTools(
     "Permanently delete a connection and all its synced data configuration. This cannot be undone.",
     {
       connection_id: z.string().describe("The connection ID to delete"),
+      verbose: z.boolean().optional().describe(VERBOSE_DESC),
     },
-    async ({ connection_id }) => {
-      const r = await ft(auth, "DELETE", `/connections/${connection_id}`);
+    async ({ connection_id, verbose }) => {
+      const r = await ft(auth, "DELETE", `/connections/${connection_id}`, undefined, undefined, verbose ? undefined : "Connection deleted successfully.");
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
     }
   );
@@ -139,15 +148,16 @@ export function registerNativeTools(
   // 6. Trigger Sync
   server.tool(
     "trigger_sync",
-    "Trigger an immediate sync for a connection without waiting for the next scheduled sync.",
+    "Trigger an immediate sync for a connection without waiting for the next scheduled sync. Returns compact confirmation by default — set verbose=true for full response.",
     {
       connection_id: z.string().describe("The connection ID"),
       force: z.boolean().optional().describe("Force sync even if one is already running (default false)"),
+      verbose: z.boolean().optional().describe(VERBOSE_DESC),
     },
-    async ({ connection_id, force }) => {
+    async ({ connection_id, force, verbose }) => {
       const body: Record<string, unknown> = {};
       if (force) body.force = force;
-      const r = await ft(auth, "POST", `/connections/${connection_id}/sync`, undefined, body);
+      const r = await ft(auth, "POST", `/connections/${connection_id}/sync`, undefined, body, verbose ? undefined : "Sync triggered successfully.");
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
     }
   );
@@ -155,12 +165,13 @@ export function registerNativeTools(
   // 7. Pause Connection
   server.tool(
     "pause_connection",
-    "Pause a connection's sync schedule. The connection will not sync until resumed.",
+    "Pause a connection's sync schedule. The connection will not sync until resumed. Returns compact confirmation by default — set verbose=true for full response.",
     {
       connection_id: z.string().describe("The connection ID"),
+      verbose: z.boolean().optional().describe(VERBOSE_DESC),
     },
-    async ({ connection_id }) => {
-      const r = await ft(auth, "PATCH", `/connections/${connection_id}`, undefined, { paused: true });
+    async ({ connection_id, verbose }) => {
+      const r = await ft(auth, "PATCH", `/connections/${connection_id}`, undefined, { paused: true }, verbose ? undefined : "Connection paused successfully.");
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
     }
   );
@@ -168,12 +179,13 @@ export function registerNativeTools(
   // 8. Resume Connection
   server.tool(
     "resume_connection",
-    "Resume a paused connection. It will sync on its next scheduled interval.",
+    "Resume a paused connection. It will sync on its next scheduled interval. Returns compact confirmation by default — set verbose=true for full response.",
     {
       connection_id: z.string().describe("The connection ID"),
+      verbose: z.boolean().optional().describe(VERBOSE_DESC),
     },
-    async ({ connection_id }) => {
-      const r = await ft(auth, "PATCH", `/connections/${connection_id}`, undefined, { paused: false });
+    async ({ connection_id, verbose }) => {
+      const r = await ft(auth, "PATCH", `/connections/${connection_id}`, undefined, { paused: false }, verbose ? undefined : "Connection resumed successfully.");
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
     }
   );
@@ -196,13 +208,14 @@ export function registerNativeTools(
   // 10. Update Connection Schema
   server.tool(
     "update_connection_schema",
-    "Update schema config to enable/disable schemas, tables, or columns for a connection.",
+    "Update schema config to enable/disable schemas, tables, or columns for a connection. Returns compact confirmation by default — set verbose=true for full schema response.",
     {
       connection_id: z.string().describe("The connection ID"),
       schemas: z.record(z.unknown()).describe("Schema configuration object with enabled/disabled tables and columns"),
+      verbose: z.boolean().optional().describe(VERBOSE_DESC),
     },
-    async ({ connection_id, schemas }) => {
-      const r = await ft(auth, "PATCH", `/connections/${connection_id}/schemas`, undefined, { schemas });
+    async ({ connection_id, schemas, verbose }) => {
+      const r = await ft(auth, "PATCH", `/connections/${connection_id}/schemas`, undefined, { schemas }, verbose ? undefined : "Schema updated successfully.");
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
     }
   );
@@ -210,12 +223,13 @@ export function registerNativeTools(
   // 11. Reload Schema
   server.tool(
     "reload_schema",
-    "Reload the schema configuration from the source. Detects new tables, columns, or schema changes.",
+    "Reload the schema configuration from the source. Detects new tables, columns, or schema changes. Returns compact confirmation by default — set verbose=true for full response.",
     {
       connection_id: z.string().describe("The connection ID"),
+      verbose: z.boolean().optional().describe(VERBOSE_DESC),
     },
-    async ({ connection_id }) => {
-      const r = await ft(auth, "POST", `/connections/${connection_id}/schemas/reload`);
+    async ({ connection_id, verbose }) => {
+      const r = await ft(auth, "POST", `/connections/${connection_id}/schemas/reload`, undefined, undefined, verbose ? undefined : "Schema reload triggered successfully.");
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
     }
   );
@@ -247,7 +261,6 @@ export function registerNativeTools(
       if (r.isError) {
         return { content: [{ type: "text" as const, text: r.text }], isError: true };
       }
-      // Flatten the nested schema response into a per-table list
       try {
         const data = JSON.parse(r.text);
         const tables: Array<Record<string, unknown>> = [];
@@ -346,12 +359,13 @@ export function registerNativeTools(
   // 18. Test Destination
   server.tool(
     "test_destination",
-    "Run setup tests for a destination to verify connectivity and configuration.",
+    "Run setup tests for a destination to verify connectivity and configuration. Returns compact confirmation by default — set verbose=true for full response.",
     {
       destination_id: z.string().describe("The destination ID"),
+      verbose: z.boolean().optional().describe(VERBOSE_DESC),
     },
-    async ({ destination_id }) => {
-      const r = await ft(auth, "POST", `/destinations/${destination_id}/test`);
+    async ({ destination_id, verbose }) => {
+      const r = await ft(auth, "POST", `/destinations/${destination_id}/test`, undefined, undefined, verbose ? undefined : "Destination test completed.");
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
     }
   );
@@ -377,17 +391,18 @@ export function registerNativeTools(
   // 20. Invite User
   server.tool(
     "invite_user",
-    "Invite a new user to the Fivetran account with a specified role.",
+    "Invite a new user to the Fivetran account with a specified role. Returns compact confirmation by default — set verbose=true for full response.",
     {
       email: z.string().describe("User's email address"),
       given_name: z.string().describe("User's first name"),
       family_name: z.string().describe("User's last name"),
       role: z.string().optional().describe("Account-level role (use search to find /roles endpoint for options)"),
+      verbose: z.boolean().optional().describe(VERBOSE_DESC),
     },
-    async ({ email, given_name, family_name, role }) => {
+    async ({ email, given_name, family_name, role, verbose }) => {
       const body: Record<string, unknown> = { email, given_name, family_name };
       if (role) body.role = role;
-      const r = await ft(auth, "POST", "/users", undefined, body);
+      const r = await ft(auth, "POST", "/users", undefined, body, verbose ? undefined : "User invited successfully.");
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
     }
   );
@@ -413,13 +428,13 @@ export function registerNativeTools(
   // 22. Resync Tables
   server.tool(
     "resync_tables",
-    "Force a historical resync of specific tables within a connection. Only re-syncs the specified tables, not the entire connection.",
+    "Force a historical resync of specific tables within a connection. Only re-syncs the specified tables, not the entire connection. Returns compact confirmation by default — set verbose=true for full response.",
     {
       connection_id: z.string().describe("The connection ID"),
       tables: z.record(z.array(z.string())).describe('Object mapping schema names to arrays of table names, e.g. { "public": ["users", "orders"] }'),
+      verbose: z.boolean().optional().describe(VERBOSE_DESC),
     },
-    async ({ connection_id, tables }) => {
-      // Transform simplified format to Fivetran's expected format
+    async ({ connection_id, tables, verbose }) => {
       const schemas: Record<string, { tables: Record<string, Record<string, never>> }> = {};
       for (const [schemaName, tableNames] of Object.entries(tables)) {
         const tablesObj: Record<string, Record<string, never>> = {};
@@ -428,7 +443,7 @@ export function registerNativeTools(
         }
         schemas[schemaName] = { tables: tablesObj };
       }
-      const r = await ft(auth, "POST", `/connections/${connection_id}/schemas/tables/resync`, undefined, { schemas });
+      const r = await ft(auth, "POST", `/connections/${connection_id}/schemas/tables/resync`, undefined, { schemas }, verbose ? undefined : "Table resync triggered successfully.");
       return { content: [{ type: "text" as const, text: r.text }], isError: r.isError };
     }
   );

@@ -6,6 +6,7 @@ import {
   unwrapData,
   formatResponse,
   formatError,
+  summarizeWriteResponse,
 } from "../utils.js";
 
 const executeSchema = {
@@ -27,6 +28,12 @@ const executeSchema = {
     .describe(
       'Query parameters (e.g., { "limit": "10", "cursor": "abc123" })'
     ),
+  verbose: z
+    .boolean()
+    .optional()
+    .describe(
+      "Return full API response. By default, write operations (POST/PATCH/PUT/DELETE) return compact summaries to save context. Set verbose=true to get the full response."
+    ),
 };
 
 export function registerExecuteTool(
@@ -38,10 +45,10 @@ export function registerExecuteTool(
 
   server.tool(
     "execute",
-    "Execute any Fivetran REST API call. Use the search tool first to discover available endpoints and their parameters.",
+    "Execute any Fivetran REST API call. Use the search tool first to discover available endpoints and their parameters. Write operations return compact summaries by default — set verbose=true for full response.",
     executeSchema,
     async (params) => {
-      const { method, path, body, params: queryParams } = params;
+      const { method, path, body, params: queryParams, verbose } = params;
 
       const url = buildUrl(path, queryParams);
 
@@ -78,6 +85,22 @@ export function registerExecuteTool(
         }
 
         const unwrapped = unwrapData(data);
+
+        // Compact mode for write operations (unless verbose requested)
+        if (!verbose && ["POST", "PATCH", "PUT", "DELETE"].includes(method)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: summarizeWriteResponse(
+                  unwrapped,
+                  `${method} ${path} — Success.`
+                ),
+              },
+            ],
+          };
+        }
+
         return {
           content: [{ type: "text", text: formatResponse(unwrapped) }],
         };
